@@ -54,11 +54,11 @@ def get_line_bresenham(start, end):
     return points
 
 
-seq_name = 'kitti_00'
+seq_name = 'kitti'
 # seq_name = 'tum'
 # inverse of cell size
-scale_factor = 3
-resize_factor = 5
+scale_factor = 10
+resize_factor = 1
 filter_ground_points = 0
 load_counters = 0
 

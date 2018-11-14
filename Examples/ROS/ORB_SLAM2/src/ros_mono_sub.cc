@@ -150,13 +150,13 @@ void saveMap(unsigned int id) {
 	mkdir("results", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 	if (id > 0) {
 		cv::imwrite("results//grid_map_" + to_string(id) + ".jpg", grid_map);
-		cv::imwrite("results//grid_map_thresh_" + to_string(id) + ".jpg", grid_map_thresh);
-		cv::imwrite("results//grid_map_thresh_resized" + to_string(id) + ".jpg", grid_map_thresh_resized);
+		cv::imwrite("results//grid_map_thresh_" + to_string(id) + ".pgm", grid_map_thresh);
+		cv::imwrite("results//grid_map_thresh_resized" + to_string(id) + ".pgm", grid_map_thresh_resized);
 	}
 	else {
 		cv::imwrite("results//grid_map.jpg", grid_map);
-		cv::imwrite("results//grid_map_thresh.jpg", grid_map_thresh);
-		cv::imwrite("results//grid_map_thresh_resized.jpg", grid_map_thresh_resized);
+		cv::imwrite("results//grid_map_thresh.pgm", grid_map_thresh);
+		cv::imwrite("results//grid_map_thresh_resized.pgm", grid_map_thresh_resized);
 	}
 
 }

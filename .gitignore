@@ -17,4 +17,10 @@ Vocabulary/ORBvoc.txt
 build/
 *~
 lib/
+Examples/ROS/ORB_SLAM2/Mono
+Examples/ROS/ORB_SLAM2/MonoAR
+Examples/ROS/ORB_SLAM2/Monopub
+Examples/ROS/ORB_SLAM2/Monosub
+Examples/ROS/ORB_SLAM2/RGBD
+Examples/ROS/ORB_SLAM2/Stereo
 
