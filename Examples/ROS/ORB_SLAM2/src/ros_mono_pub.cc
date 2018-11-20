@@ -46,7 +46,7 @@
 
 //! parameters
 bool read_from_topic = false, read_from_camera = false;
-std::string image_topic = "/camera/image_raw";
+std::string image_topic = "/usb_cam/image_raw";
 int all_pts_pub_gap = 0;
 
 vector<string> vstrImageFilenames;
@@ -60,20 +60,22 @@ void LoadImages(const string &strSequence, vector<string> &vstrImageFilenames,
 	vector<double> &vTimestamps);
 inline bool isInteger(const std::string & s);
 void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
-	ros::Publisher &pub_all_kf_and_pts, int frame_id);
+	ros::Publisher &pub_all_kf_and_pts, ros::Publisher &pub_cloud, int frame_id);
 
 class ImageGrabber{
 public:
 	ImageGrabber(ORB_SLAM2::System &_SLAM, ros::Publisher &_pub_pts_and_pose,
-		ros::Publisher &_pub_all_kf_and_pts) :
+		ros::Publisher &_pub_all_kf_and_pts, ros::Publisher &_pub_cloud) :
 		SLAM(_SLAM), pub_pts_and_pose(_pub_pts_and_pose),
-		pub_all_kf_and_pts(_pub_all_kf_and_pts), frame_id(0){}
+		pub_all_kf_and_pts(_pub_all_kf_and_pts), 
+		pub_cloud(_pub_cloud), frame_id(0){}
 
 	void GrabImage(const sensor_msgs::ImageConstPtr& msg);
 
 	ORB_SLAM2::System &SLAM;
 	ros::Publisher &pub_pts_and_pose;
 	ros::Publisher &pub_all_kf_and_pts;
+	ros::Publisher &pub_cloud;
 	int frame_id;
 };
 bool parseParams(int argc, char **argv);
@@ -91,11 +93,11 @@ int main(int argc, char **argv){
 	// Create SLAM system. It initializes all system threads and gets ready to process frames.
 	ORB_SLAM2::System SLAM(argv[1], argv[2], ORB_SLAM2::System::MONOCULAR, true);
 	ros::NodeHandle nodeHandler;
-	//ros::Publisher pub_cloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("cloud_in", 1000);
+	ros::Publisher pub_cloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("cloud_in", 1000);
 	ros::Publisher pub_pts_and_pose = nodeHandler.advertise<geometry_msgs::PoseArray>("pts_and_pose", 1000);
 	ros::Publisher pub_all_kf_and_pts = nodeHandler.advertise<geometry_msgs::PoseArray>("all_kf_and_pts", 1000);
 	if (read_from_topic) {
-		ImageGrabber igb(SLAM, pub_pts_and_pose, pub_all_kf_and_pts);
+		ImageGrabber igb(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud);
 		ros::Subscriber sub = nodeHandler.subscribe(image_topic, 1, &ImageGrabber::GrabImage, &igb);
 		ros::spin();
 	}
@@ -131,7 +133,7 @@ int main(int argc, char **argv){
 			// Pass the image to the SLAM system
 			cv::Mat curr_pose = SLAM.TrackMonocular(im, tframe);
 
-			publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id);
+			publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud, frame_id);
 
 			//cv::imshow("Press escape to exit", im);
 			//if (cv::waitKey(1) == 27) {
@@ -161,7 +163,11 @@ int main(int argc, char **argv){
 }
 
 void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
-	ros::Publisher &pub_all_kf_and_pts, int frame_id) {
+	ros::Publisher &pub_all_kf_and_pts, ros::Publisher &pub_cloud, int frame_id) {
+
+	pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	cv::Mat wp;
+
 	if (all_pts_pub_gap>0 && pub_count >= all_pts_pub_gap) {
 		pub_all_pts = true;
 		pub_count = 0;
@@ -211,7 +217,7 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 				}
 				geometry_msgs::Pose curr_pt;
 				//printf("wp size: %d, %d\n", wp.rows, wp.cols);
-				//pcl_cloud->push_back(pcl::PointXYZ(wp.at<float>(0), wp.at<float>(1), wp.at<float>(2)));
+				pcl_cloud->push_back(pcl::PointXYZ(wp.at<float>(0), wp.at<float>(1), wp.at<float>(2)));
 				curr_pt.position.x = pt_pose.at<float>(0);
 				curr_pt.position.y = pt_pose.at<float>(1);
 				curr_pt.position.z = pt_pose.at<float>(2);
@@ -266,8 +272,6 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 
 		//printf("n_map_pts: %d\n", n_map_pts);
 
-		//pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-
 		geometry_msgs::PoseArray pt_array;
 		//pt_array.poses.resize(n_map_pts + 1);
 
@@ -292,7 +296,7 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 				//printf("Point %d is bad\n", pt_id);
 				continue;
 			}
-			cv::Mat wp = map_points[pt_id - 1]->GetWorldPos();
+			wp = map_points[pt_id - 1]->GetWorldPos();
 
 			if (wp.empty()) {
 				//printf("World position for point %d is empty\n", pt_id);
@@ -300,22 +304,21 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 			}
 			geometry_msgs::Pose curr_pt;
 			//printf("wp size: %d, %d\n", wp.rows, wp.cols);
-			//pcl_cloud->push_back(pcl::PointXYZ(wp.at<float>(0), wp.at<float>(1), wp.at<float>(2)));
+			pcl_cloud->push_back(pcl::PointXYZ(wp.at<float>(0), wp.at<float>(1), wp.at<float>(2)));
 			curr_pt.position.x = wp.at<float>(0);
 			curr_pt.position.y = wp.at<float>(1);
 			curr_pt.position.z = wp.at<float>(2);
 			pt_array.poses.push_back(curr_pt);
 			//printf("Done getting map point %d\n", pt_id);
 		}
-		//sensor_msgs::PointCloud2 ros_cloud;
-		//pcl::toROSMsg(*pcl_cloud, ros_cloud);
-		//ros_cloud.header.frame_id = "1";
-		//ros_cloud.header.seq = ni;
-
+		sensor_msgs::PointCloud2 ros_cloud;
+		pcl::toROSMsg(*pcl_cloud, ros_cloud);
+		ros_cloud.header.frame_id = "1";
+		ros_cloud.header.seq = frame_id + 1;
 		//printf("valid map pts: %lu\n", pt_array.poses.size()-1);
-
 		//printf("ros_cloud size: %d x %d\n", ros_cloud.height, ros_cloud.width);
-		//pub_cloud.publish(ros_cloud);
+		pub_cloud.publish(ros_cloud);
+		
 		pt_array.header.frame_id = "1";
 		pt_array.header.seq = frame_id + 1;
 		pub_pts_and_pose.publish(pt_array);
@@ -372,7 +375,7 @@ void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg){
 		return;
 	}
 	SLAM.TrackMonocular(cv_ptr->image, cv_ptr->header.stamp.toSec());
-	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, frame_id);
+	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud, frame_id);
 	++frame_id;
 }
 
