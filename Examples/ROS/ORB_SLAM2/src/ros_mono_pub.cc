@@ -313,7 +313,7 @@ void publish(ORB_SLAM2::System &SLAM, ros::Publisher &pub_pts_and_pose,
 		}
 		sensor_msgs::PointCloud2 ros_cloud;
 		pcl::toROSMsg(*pcl_cloud, ros_cloud);
-		ros_cloud.header.frame_id = "1";
+		ros_cloud.header.frame_id = "cloud_link";
 		ros_cloud.header.seq = frame_id + 1;
 		//printf("valid map pts: %lu\n", pt_array.poses.size()-1);
 		//printf("ros_cloud size: %d x %d\n", ros_cloud.height, ros_cloud.width);
