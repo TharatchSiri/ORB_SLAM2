@@ -22,7 +22,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <Converter.h>
 
-// parameters
+// default parameters
 float scale_factor = 3;
 float resize_factor = 5;
 float cloud_max_x = 10;
@@ -80,16 +80,18 @@ int main(int argc, char **argv){
 	parseParams(argc, argv);
 	printParams();
 
-	grid_max_x = cloud_max_x*scale_factor;
-	grid_min_x = cloud_min_x*scale_factor;
-	grid_max_z = cloud_max_z*scale_factor;
-	grid_min_z = cloud_min_z*scale_factor;
+	grid_max_x = cloud_max_x * scale_factor;
+	grid_min_x = cloud_min_x * scale_factor;
+	grid_max_z = cloud_max_z * scale_factor;
+	grid_min_z = cloud_min_z * scale_factor;
 	printf("grid_max: %f, %f\t grid_min: %f, %f\n", grid_max_x, grid_max_z, grid_min_x, grid_min_z);
 
-	double grid_res_x = grid_max_x - grid_min_x, grid_res_z = grid_max_z - grid_min_z;
+	double grid_res_x = grid_max_x - grid_min_x;
+	double grid_res_z = grid_max_z - grid_min_z;
 
-	h = grid_res_z;
-	w = grid_res_x;
+	w = grid_res_x;  // width (along x coordinates)
+	h = grid_res_z;  // height (along z coordinates)
+
 	printf("grid_size: (%d, %d)\n", h, w);
 	n_kf_received = 0;
 
@@ -98,10 +100,10 @@ int main(int argc, char **argv){
 	global_occupied_counter.setTo(cv::Scalar(0));
 	global_visit_counter.setTo(cv::Scalar(0));
 
-	grid_map_msg.data.resize(h*w);
+	grid_map_msg.data.resize(h * w);
 	grid_map_msg.info.width = w;
 	grid_map_msg.info.height = h;
-	grid_map_msg.info.resolution = 1.0/scale_factor;
+	grid_map_msg.info.resolution = 1.0 / scale_factor;  // inverse of desired resolution
 
 	grid_map_int = cv::Mat(h, w, CV_8SC1, (char*)(grid_map_msg.data.data()));
 
@@ -161,24 +163,6 @@ void saveMap(unsigned int id) {
 
 }
 void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
-	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
-	//	pts_and_pose->header.seq);
-	//if (pts_and_pose->header.seq==0) {
-	//	cv::destroyAllWindows();
-	//	saveMap();
-	//	printf("Received exit message\n");
-	//	ros::shutdown();
-	//	exit(0);
-	//}
-//	if (!got_start_time) {
-//#ifdef COMPILEDWITHC11
-//		start_time = std::chrono::steady_clock::now();
-//#else
-//		start_time = std::chrono::monotonic_clock::now();
-//#endif
-//		got_start_time = true;
-//	}
-
 	if (loop_closure_being_processed){ return; }
 
 	updateGridMap(pts_and_pose);
@@ -187,14 +171,6 @@ void ptCallback(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 	pub_grid_map.publish(grid_map_msg);
 }
 void loopClosingCallback(const geometry_msgs::PoseArray::ConstPtr& all_kf_and_pts){
-	//ROS_INFO("Received points and pose: [%s]{%d}", pts_and_pose->header.frame_id.c_str(),
-	//	pts_and_pose->header.seq);
-	//if (all_kf_and_pts->header.seq == 0) {
-	//	cv::destroyAllWindows();
-	//	saveMap();
-	//	ros::shutdown();
-	//	exit(0);
-	//}
 	loop_closure_being_processed = true;
 	resetGridMap(all_kf_and_pts);
 	loop_closure_being_processed = false;
@@ -218,9 +194,12 @@ void getMixMax(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose,
 }
 void processMapPt(const geometry_msgs::Point &curr_pt, cv::Mat &occupied, 
 	cv::Mat &visited, cv::Mat &pt_mask, int kf_pos_grid_x, int kf_pos_grid_z) {
-	float pt_pos_x = curr_pt.x*scale_factor;
-	float pt_pos_z = curr_pt.z*scale_factor;
 
+	// upscale current point's pose to real resolution
+	float pt_pos_x = curr_pt.x * scale_factor;
+	float pt_pos_z = curr_pt.z * scale_factor;
+
+	// normalize pose to fit desired range
 	int pt_pos_grid_x = int(floor((pt_pos_x - grid_min_x) * norm_factor_x));
 	int pt_pos_grid_z = int(floor((pt_pos_z - grid_min_z) * norm_factor_z));
 
@@ -235,10 +214,9 @@ void processMapPt(const geometry_msgs::Point &curr_pt, cv::Mat &occupied,
 	++occupied.at<int>(pt_pos_grid_z, pt_pos_grid_x);
 	pt_mask.at<uchar>(pt_pos_grid_z, pt_pos_grid_x) = 255;
 
-	//cout << "----------------------" << endl;
-	//cout << okf_pos_grid_x << " " << okf_pos_grid_y << endl;
-
 	// Get all grid cell that the line between keyframe and map point pass through
+	// Cast a ray from the camera position to all the visible points using the
+	// Bressenham’s line drawing algorithm
 	int x0 = kf_pos_grid_x;
 	int y0 = kf_pos_grid_z;
 	int x1 = pt_pos_grid_x;
@@ -259,6 +237,8 @@ void processMapPt(const geometry_msgs::Point &curr_pt, cv::Mat &occupied,
 	int y = y0;
 	int ystep = (y0 < y1) ? 1 : -1;
 	for (int x = x0; x <= x1; ++x){
+
+		// Increment a visit counter for each point along the ray
 		if (steep) {
 			++visited.at<int>(x, y);
 		}
@@ -280,6 +260,9 @@ void processMapPts(const std::vector<geometry_msgs::Pose> &pts, unsigned int n_p
 		local_map_pt_mask.setTo(0);
 		local_occupied_counter.setTo(0);
 		local_visit_counter.setTo(0);
+		
+		// go through grid cell with map point and assign occupied counter value
+		// accumulate visited counter value along the ray casted from camera pose to each map point
 		for (unsigned int pt_id = start_id; pt_id < end_id; ++pt_id){
 			processMapPt(pts[pt_id].position, local_occupied_counter, local_visit_counter,
 				local_map_pt_mask, kf_pos_grid_x, kf_pos_grid_z);
@@ -307,21 +290,13 @@ void processMapPts(const std::vector<geometry_msgs::Pose> &pts, unsigned int n_p
 
 void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 
-	//geometry_msgs::Point min_pt, max_pt;
-	//getMixMax(pts_and_pose, min_pt, max_pt);
-	//printf("max_pt: %f, %f\t min_pt: %f, %f\n", max_pt.x*scale_factor, max_pt.z*scale_factor, 
-	//	min_pt.x*scale_factor, min_pt.z*scale_factor);
-
-	//double grid_res_x = max_pt.x - min_pt.x, grid_res_z = max_pt.z - min_pt.z;
-
-	//printf("Received frame %u \n", pts_and_pose->header.seq);
-
+	// kf_location is camera pose (the first element in pose array is camera pose)
 	const geometry_msgs::Point &kf_location = pts_and_pose->poses[0].position;
-	//const geometry_msgs::Quaternion &kf_orientation = pts_and_pose->poses[0].orientation;
 
-	kf_pos_x = kf_location.x*scale_factor;
-	kf_pos_z = kf_location.z*scale_factor;
+	kf_pos_x = kf_location.x * scale_factor;
+	kf_pos_z = kf_location.z * scale_factor;
 
+	// upscale camera pose to real resolution and normalize
 	kf_pos_grid_x = int(floor((kf_pos_x - grid_min_x) * norm_factor_x));
 	kf_pos_grid_z = int(floor((kf_pos_z - grid_min_z) * norm_factor_z));
 
@@ -330,14 +305,17 @@ void updateGridMap(const geometry_msgs::PoseArray::ConstPtr& pts_and_pose){
 
 	if (kf_pos_grid_z < 0 || kf_pos_grid_z >= h)
 		return;
-	++n_kf_received;
+
 	unsigned int n_pts = pts_and_pose->poses.size() - 1;
-	//printf("Processing key frame %u and %u points\n",n_kf_received, n_pts);
+
+	// pts_and_pose->poses: all the poses in array
+	// n_pts: size of pose array (number of map points) --> end_id = start_id + n_pts
+	// 1: start id --> has to be one (as 0 is the index for camera pose)
+	// kf_pos_grid_x, kf_pos_grid_z: normalized upscaled camera pose
 	processMapPts(pts_and_pose->poses, n_pts, 1, kf_pos_grid_x, kf_pos_grid_z);
 
 	getGridMap();
 	showGridMap(pts_and_pose->header.seq);
-	//cout << endl << "Grid map saved!" << endl;
 }
 
 void resetGridMap(const geometry_msgs::PoseArray::ConstPtr& all_kf_and_pts){
@@ -499,7 +477,6 @@ void printParams() {
 	printf("scale_factor: %f\n", scale_factor);
 	printf("resize_factor: %f\n", resize_factor);
 	printf("cloud_max: %f, %f\t cloud_min: %f, %f\n", cloud_max_x, cloud_max_z, cloud_min_x, cloud_min_z);
-	//printf("cloud_min: %f, %f\n", cloud_min_x, cloud_min_z);
 	printf("free_thresh: %f\n", free_thresh);
 	printf("occupied_thresh: %f\n", occupied_thresh);
 	printf("use_local_counters: %d\n", use_local_counters);
