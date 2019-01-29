@@ -31,6 +31,10 @@
 #include "geometry_msgs/PoseStamped.h"
 #include "geometry_msgs/PoseArray.h"
 
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -46,7 +50,9 @@
 
 //! parameters
 bool read_from_topic = false, read_from_camera = false;
-std::string image_topic = "/camera/image_raw";
+std::string image_topic = "/camera/color/image_raw";
+std::string depth_topic = "/camera/aligned_depth_to_color/image_raw";
+
 int all_pts_pub_gap = 0;
 
 vector<string> vstrImageFilenames;
@@ -69,7 +75,8 @@ public:
 		SLAM(_SLAM), pub_pts_and_pose(_pub_pts_and_pose),
 		pub_all_kf_and_pts(_pub_all_kf_and_pts),pub_cloud(_pub_cloud), frame_id(0){}
 
-	void GrabImage(const sensor_msgs::ImageConstPtr& msg);
+	// void GrabImage(const sensor_msgs::ImageConstPtr& msg);
+	void GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD);
 
 	ORB_SLAM2::System &SLAM;
 	ros::Publisher &pub_pts_and_pose;
@@ -90,14 +97,22 @@ int main(int argc, char **argv){
 	int n_images = vstrImageFilenames.size();
 
 	// Create SLAM system. It initializes all system threads and gets ready to process frames.
-	ORB_SLAM2::System SLAM(argv[1], argv[2], ORB_SLAM2::System::MONOCULAR, true);
+	ORB_SLAM2::System SLAM(argv[1], argv[2], ORB_SLAM2::System::RGBD, true);
 	ros::NodeHandle nodeHandler;
+
+	// image and depth topics
+	message_filters::Subscriber<sensor_msgs::Image> rgb_sub(nodeHandler, image_topic, 1);
+	message_filters::Subscriber<sensor_msgs::Image> depth_sub(nodeHandler, depth_topic, 1);
+	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_pol;
+	message_filters::Synchronizer<sync_pol> sync(sync_pol(10), rgb_sub, depth_sub);
+
 	ros::Publisher pub_cloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("cloud_in", 1000);
 	ros::Publisher pub_pts_and_pose = nodeHandler.advertise<geometry_msgs::PoseArray>("pts_and_pose", 1000);
 	ros::Publisher pub_all_kf_and_pts = nodeHandler.advertise<geometry_msgs::PoseArray>("all_kf_and_pts", 1000);
 	if (read_from_topic) {
 		ImageGrabber igb(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud);
-		ros::Subscriber sub = nodeHandler.subscribe(image_topic, 1, &ImageGrabber::GrabImage, &igb);
+		// ros::Subscriber sub = nodeHandler.subscribe(image_topic, 1, &ImageGrabber::GrabImage, &igb);
+		sync.registerCallback(boost::bind(&ImageGrabber::GrabRGBD,&igb,_1,_2));
 		ros::spin();
 	}
 	else{
@@ -365,24 +380,54 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageFilena
 	}
 }
 
-void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg){
-	// Copy the ros image message to cv::Mat.
-	cv_bridge::CvImageConstPtr cv_ptr;
-	try{
-		cv_ptr = cv_bridge::toCvShare(msg);
-	}
-	catch (cv_bridge::Exception& e){
-		ROS_ERROR("cv_bridge exception: %s", e.what());
-		return;
-	}
-	SLAM.TrackMonocular(cv_ptr->image, cv_ptr->header.stamp.toSec());
+// void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg){
+// 	// Copy the ros image message to cv::Mat.
+// 	cv_bridge::CvImageConstPtr cv_ptr;
+// 	try{
+// 		cv_ptr = cv_bridge::toCvShare(msg);
+// 	}
+// 	catch (cv_bridge::Exception& e){
+// 		ROS_ERROR("cv_bridge exception: %s", e.what());
+// 		return;
+// 	}
+// 	SLAM.TrackMonocular(cv_ptr->image, cv_ptr->header.stamp.toSec());
+// 	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud, frame_id);
+// 	++frame_id;
+// }
+
+void ImageGrabber::GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD)
+{
+    // Copy the ros image message to cv::Mat.
+    cv_bridge::CvImageConstPtr cv_ptrRGB;
+    try
+    {
+        cv_ptrRGB = cv_bridge::toCvShare(msgRGB);
+    }
+    catch (cv_bridge::Exception& e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+    cv_bridge::CvImageConstPtr cv_ptrD;
+    try
+    {
+        cv_ptrD = cv_bridge::toCvShare(msgD);
+    }
+    catch (cv_bridge::Exception& e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+
+    SLAM.TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec());
 	publish(SLAM, pub_pts_and_pose, pub_all_kf_and_pts, pub_cloud, frame_id);
 	++frame_id;
 }
 
 bool parseParams(int argc, char **argv) {
-	if (argc < 4){
-		cerr << endl << "Usage: rosrun ORB_SLAM2 Monopub path_to_vocabulary path_to_settings path_to_sequence/camera_id/-1 <image_topic>" << endl;
+	if (argc < 5){
+		cerr << endl << "Usage: rosrun ORB_SLAM2 Monopub path_to_vocabulary path_to_settings path_to_sequence/camera_id/-1 <image_topic> <depth_topic>" << endl;
 		return 1;
 	}
 	if (isInteger(std::string(argv[3]))) {
@@ -402,16 +447,21 @@ bool parseParams(int argc, char **argv) {
 		}
 		else {
 			read_from_topic = true;
-			if (argc > 4){
+			int check_image = atoi(argv[4]);
+			int check_depth = atoi(argv[5]);
+			if (argc > 5 && check_image >= 0 && check_depth >= 0){
 				image_topic = std::string(argv[4]);
+				depth_topic = std::string(argv[5]);				
 			}
 			printf("Reading images from topic %s\n", image_topic.c_str());
+			printf("Reading depths from topic %s\n", depth_topic.c_str());
+			
 		}
 	}
 	else {
 		LoadImages(string(argv[3]), vstrImageFilenames, vTimestamps);
 	}
-	if (argc >= 5) {
+	if (argc >= 6) {
 		all_pts_pub_gap = atoi(argv[4]);
 	}
 	printf("all_pts_pub_gap: %d\n", all_pts_pub_gap);

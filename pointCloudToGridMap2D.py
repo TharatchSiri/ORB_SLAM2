@@ -57,7 +57,7 @@ def get_line_bresenham(start, end):
 seq_name = 'line'
 # seq_name = 'tum'
 # inverse of cell size
-scale_factor = 50
+scale_factor = 20
 resize_factor = 1
 filter_ground_points = 0
 load_counters = 0
