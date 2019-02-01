@@ -21,7 +21,6 @@
 #include "Map.h"
 
 #include<mutex>
-
 namespace ORB_SLAM2
 {
 
